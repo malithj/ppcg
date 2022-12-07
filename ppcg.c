@@ -35,7 +35,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "custom_sched_tor.h"
+#include "custom_sched_validator.h"
 
 struct options {
 	struct pet_options *pet;
@@ -1017,7 +1017,7 @@ static __isl_give isl_printer *transform(__isl_take isl_printer *p,
 	ps = ppcg_scop_from_pet_scop(scop, data->options);
 
 	// before transformation we need to te the dependencies
-	int status = te_custom_schedule(ps->dep_false, ps->schedule);
+	int status = validate_custom_schedule(ps->dep_false, ps->schedule);
 
 	p = data->transform(p, ps, data->user);
 
