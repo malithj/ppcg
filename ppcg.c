@@ -11,30 +11,31 @@
  * and Ecole Normale Superieure, 45 rue d'Ulm, 75230 Paris, France
  */
 
+#include "ppcg.h"
+#include "cpu.h"
+#include "cuda.h"
+#include "opencl.h"
+#include "ppcg_options.h"
 #include <assert.h>
+#include <isl/aff.h>
+#include <isl/ast.h>
+#include <isl/ast_build.h>
+#include <isl/ctx.h>
+#include <isl/flow.h>
+#include <isl/id.h>
+#include <isl/id_to_ast_expr.h>
+#include <isl/options.h>
+#include <isl/schedule.h>
+#include <isl/set.h>
+#include <isl/union_map.h>
+#include <isl/union_set.h>
+#include <isl/val.h>
+#include <pet.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <isl/ctx.h>
-#include <isl/id.h>
-#include <isl/val.h>
-#include <isl/set.h>
-#include <isl/union_set.h>
-#include <isl/union_map.h>
-#include <isl/aff.h>
-#include <isl/flow.h>
-#include <isl/options.h>
-#include <isl/schedule.h>
-#include <isl/ast.h>
-#include <isl/id_to_ast_expr.h>
-#include <isl/ast_build.h>
-#include <isl/schedule.h>
-#include <pet.h>
-#include "ppcg.h"
-#include "ppcg_options.h"
-#include "cuda.h"
-#include "opencl.h"
-#include "cpu.h"
+
+#include "custom_sched_tor.h"
 
 struct options {
 	struct pet_options *pet;
@@ -53,7 +54,7 @@ ISL_ARGS_START(struct options, options_args)
 ISL_ARG_CHILD(struct options, pet, "pet", &pet_options_args, "pet options")
 ISL_ARG_CHILD(struct options, ppcg, NULL, &ppcg_options_args, "ppcg options")
 ISL_ARG_STR(struct options, output, 'o', NULL,
-	"filename", NULL, "output filename (c and opencl targets)")
+	    "filename", NULL, "output filename (c and opencl targets)")
 ISL_ARG_ARG(struct options, input, "input", NULL)
 ISL_ARG_VERSION(print_version)
 ISL_ARGS_END
@@ -138,7 +139,7 @@ static __isl_give isl_id_to_ast_expr *collect_names(struct pet_scop *scop)
 
 		id = isl_set_get_dim_id(scop->context, isl_dim_param, i);
 		names = isl_id_to_ast_expr_set(names,
-						id, isl_ast_expr_copy(zero));
+					       id, isl_ast_expr_copy(zero));
 	}
 
 	for (i = 0; i < scop->n_array; ++i) {
@@ -147,7 +148,7 @@ static __isl_give isl_id_to_ast_expr *collect_names(struct pet_scop *scop)
 
 		id = isl_set_get_tuple_id(array->extent);
 		names = isl_id_to_ast_expr_set(names,
-						id, isl_ast_expr_copy(zero));
+					       id, isl_ast_expr_copy(zero));
 	}
 
 	isl_ast_expr_free(zero);
@@ -160,7 +161,7 @@ static __isl_give isl_id_to_ast_expr *collect_names(struct pet_scop *scop)
  * of "scop", then adjust the name to "prefix%d_%d".
  */
 static __isl_give isl_id *generate_name(struct ppcg_scop *scop,
-	const char *prefix, int i)
+					const char *prefix, int i)
 {
 	int j;
 	char name[23];
@@ -187,7 +188,7 @@ static __isl_give isl_id *generate_name(struct ppcg_scop *scop,
  * of "scop", then adjust the name to "prefix%d_%d".
  */
 __isl_give isl_id_list *ppcg_scop_generate_names(struct ppcg_scop *scop,
-	int n, const char *prefix)
+						 int n, const char *prefix)
 {
 	int i;
 	isl_ctx *ctx;
@@ -216,7 +217,7 @@ static int is_not_kill(struct pet_stmt *stmt)
  * satisfy "pred".
  */
 static __isl_give isl_union_set *collect_domains(struct pet_scop *scop,
-	int (*pred)(struct pet_stmt *stmt))
+						 int (*pred)(struct pet_stmt *stmt))
 {
 	int i;
 	isl_set *domain_i;
@@ -326,7 +327,7 @@ static __isl_give isl_union_set *collect_call_domains(struct pet_scop *scop)
  *	S_i[...] -> A_k[...]
  */
 static __isl_give isl_union_map *project_out_tags(
-	__isl_take isl_union_map *umap)
+    __isl_take isl_union_map *umap)
 {
 	return isl_union_map_domain_factor_domain(umap);
 }
@@ -348,9 +349,9 @@ static void compute_tagger(struct ppcg_scop *ps)
 
 	tagged = isl_union_map_copy(ps->tagged_reads);
 	tagged = isl_union_map_union(tagged,
-				isl_union_map_copy(ps->tagged_may_writes));
+				     isl_union_map_copy(ps->tagged_may_writes));
 	tagged = isl_union_map_union(tagged,
-				isl_union_map_copy(ps->tagged_must_kills));
+				     isl_union_map_copy(ps->tagged_must_kills));
 	tagged = isl_union_map_universe(tagged);
 	tagged = isl_union_set_unwrap(isl_union_map_domain(tagged));
 
@@ -396,7 +397,7 @@ static void compute_live_out(struct ppcg_scop *ps)
 				    isl_union_map_copy(ps->must_kills));
 	access = isl_union_access_info_from_sink(kills);
 	access = isl_union_access_info_set_may_source(access,
-				    isl_union_map_copy(ps->may_writes));
+						      isl_union_map_copy(ps->may_writes));
 	access = isl_union_access_info_set_schedule(access, schedule);
 	flow = isl_union_access_info_compute_flow(access);
 	covering = isl_union_flow_get_full_may_dependence(flow);
@@ -440,10 +441,10 @@ static void compute_tagged_flow_dep_only(struct ppcg_scop *ps)
 	must_source = isl_union_map_copy(ps->tagged_must_writes);
 	kills = isl_union_map_union(kills, must_source);
 	access = isl_union_access_info_from_sink(
-				isl_union_map_copy(ps->tagged_reads));
+	    isl_union_map_copy(ps->tagged_reads));
 	access = isl_union_access_info_set_kill(access, kills);
 	access = isl_union_access_info_set_may_source(access,
-				isl_union_map_copy(ps->tagged_may_writes));
+						      isl_union_map_copy(ps->tagged_may_writes));
 	access = isl_union_access_info_set_schedule(access, schedule);
 	flow = isl_union_access_info_compute_flow(access);
 	tagged_flow = isl_union_flow_get_may_dependence(flow);
@@ -534,7 +535,7 @@ static void compute_order_dependences(struct ppcg_scop *ps)
 	unmatched = isl_union_map_subtract_domain(unmatched, matched);
 	reads = isl_union_map_union(reads, unmatched);
 	access = isl_union_access_info_from_sink(
-				isl_union_map_copy(ps->tagged_may_writes));
+	    isl_union_map_copy(ps->tagged_may_writes));
 	access = isl_union_access_info_set_may_source(access, reads);
 	access = isl_union_access_info_set_schedule(access, schedule);
 	flow = isl_union_access_info_compute_flow(access);
@@ -595,7 +596,7 @@ static void compute_forced_dependences(struct ppcg_scop *ps)
 	schedule = isl_schedule_copy(ps->schedule);
 	access = isl_union_access_info_from_sink(exposed);
 	access = isl_union_access_info_set_may_source(access,
-				isl_union_map_copy(ps->may_writes));
+						      isl_union_map_copy(ps->may_writes));
 	access = isl_union_access_info_set_schedule(access, schedule);
 	flow = isl_union_access_info_compute_flow(access);
 	shared_access = isl_union_flow_get_may_dependence(flow);
@@ -604,9 +605,9 @@ static void compute_forced_dependences(struct ppcg_scop *ps)
 
 	schedule = isl_schedule_copy(ps->schedule);
 	access = isl_union_access_info_from_sink(
-				isl_union_map_copy(ps->may_writes));
+	    isl_union_map_copy(ps->may_writes));
 	access = isl_union_access_info_set_may_source(access,
-				isl_union_map_copy(ps->live_in));
+						      isl_union_map_copy(ps->live_in));
 	access = isl_union_access_info_set_schedule(access, schedule);
 	flow = isl_union_access_info_compute_flow(access);
 	live_in = isl_union_flow_get_may_dependence(flow);
@@ -614,15 +615,15 @@ static void compute_forced_dependences(struct ppcg_scop *ps)
 
 	ps->dep_forced = isl_union_map_union(ps->dep_forced, live_in);
 	ps->dep_forced = isl_union_map_subtract(ps->dep_forced,
-				isl_union_map_copy(ps->independence));
+						isl_union_map_copy(ps->independence));
 
 	schedule = isl_schedule_copy(ps->schedule);
 	sink_access = isl_union_map_copy(ps->tagged_dep_flow);
 	sink_access = isl_union_map_range_product(sink_access,
-				isl_union_map_copy(ps->tagged_may_writes));
+						  isl_union_map_copy(ps->tagged_may_writes));
 	sink_access = isl_union_map_domain_factor_domain(sink_access);
 	access = isl_union_access_info_from_sink(
-				isl_union_map_copy(sink_access));
+	    isl_union_map_copy(sink_access));
 	access = isl_union_access_info_set_may_source(access, sink_access);
 	access = isl_union_access_info_set_schedule(access, schedule);
 	flow = isl_union_access_info_compute_flow(access);
@@ -694,9 +695,9 @@ static void compute_flow_dep(struct ppcg_scop *ps)
 	kills = isl_union_map_union(kills, must_writes);
 	access = isl_union_access_info_set_kill(access, kills);
 	access = isl_union_access_info_set_may_source(access,
-				isl_union_map_copy(ps->may_writes));
+						      isl_union_map_copy(ps->may_writes));
 	access = isl_union_access_info_set_schedule(access,
-				isl_schedule_copy(ps->schedule));
+						    isl_schedule_copy(ps->schedule));
 	flow = isl_union_access_info_compute_flow(access);
 
 	ps->dep_flow = isl_union_flow_get_may_dependence(flow);
@@ -734,14 +735,14 @@ static void compute_dependences(struct ppcg_scop *scop)
 		compute_flow_dep(scop);
 
 	may_source = isl_union_map_union(isl_union_map_copy(scop->may_writes),
-					isl_union_map_copy(scop->reads));
+					 isl_union_map_copy(scop->reads));
 	access = isl_union_access_info_from_sink(
-				isl_union_map_copy(scop->may_writes));
+	    isl_union_map_copy(scop->may_writes));
 	access = isl_union_access_info_set_kill(access,
-				isl_union_map_copy(scop->must_writes));
+						isl_union_map_copy(scop->must_writes));
 	access = isl_union_access_info_set_may_source(access, may_source);
 	access = isl_union_access_info_set_schedule(access,
-				isl_schedule_copy(scop->schedule));
+						    isl_schedule_copy(scop->schedule));
 	flow = isl_union_access_info_compute_flow(access);
 
 	scop->dep_false = isl_union_flow_get_may_dependence(flow);
@@ -753,7 +754,7 @@ static void compute_dependences(struct ppcg_scop *scop)
  * if there is any and if the verbose option is set.
  */
 static void report_dead_code(struct ppcg_scop *ps,
-	__isl_keep isl_union_set *live)
+			     __isl_keep isl_union_set *live)
 {
 	isl_ctx *ctx;
 	isl_printer *p;
@@ -766,7 +767,7 @@ static void report_dead_code(struct ppcg_scop *ps,
 
 	ctx = isl_union_set_get_ctx(live);
 	dead = isl_union_set_subtract(isl_union_set_copy(ps->domain),
-					isl_union_set_copy(live));
+				      isl_union_set_copy(live));
 
 	p = isl_printer_to_file(ctx, stdout);
 	p = isl_printer_print_str(p, "Eliminated dead instances: ");
@@ -826,7 +827,7 @@ static void eliminate_dead_code(struct ppcg_scop *ps)
 		live = isl_union_set_union(live, extra);
 		live = isl_union_set_affine_hull(live);
 		live = isl_union_set_intersect(live,
-					    isl_union_set_copy(ps->domain));
+					       isl_union_set_copy(ps->domain));
 	}
 
 	isl_union_map_free(dep);
@@ -834,22 +835,22 @@ static void eliminate_dead_code(struct ppcg_scop *ps)
 	report_dead_code(ps, live);
 
 	ps->domain = isl_union_set_intersect(ps->domain,
-						isl_union_set_copy(live));
+					     isl_union_set_copy(live));
 	ps->schedule = isl_schedule_intersect_domain(ps->schedule,
-						isl_union_set_copy(live));
+						     isl_union_set_copy(live));
 	ps->dep_flow = isl_union_map_intersect_range(ps->dep_flow,
-						isl_union_set_copy(live));
+						     isl_union_set_copy(live));
 	tagger = isl_union_pw_multi_aff_copy(ps->tagger);
 	live = isl_union_set_preimage_union_pw_multi_aff(live, tagger);
 	ps->tagged_dep_flow = isl_union_map_intersect_range(ps->tagged_dep_flow,
-						live);
+							    live);
 }
 
 /* Intersect "set" with the set described by "str", taking the NULL
  * string to represent the universal set.
  */
 static __isl_give isl_set *set_intersect_str(__isl_take isl_set *set,
-	const char *str)
+					     const char *str)
 {
 	isl_ctx *ctx;
 	isl_set *set2;
@@ -904,7 +905,7 @@ static void *ppcg_scop_free(struct ppcg_scop *ps)
  * so the pet_scop should not be freed before the ppcg_scop.
  */
 static struct ppcg_scop *ppcg_scop_from_pet_scop(struct pet_scop *scop,
-	struct ppcg_options *options)
+						 struct ppcg_options *options)
 {
 	int i;
 	isl_ctx *ctx;
@@ -945,7 +946,7 @@ static struct ppcg_scop *ppcg_scop_from_pet_scop(struct pet_scop *scop,
 	ps->independence = isl_union_map_empty(isl_set_get_space(ps->context));
 	for (i = 0; i < scop->n_independence; ++i)
 		ps->independence = isl_union_map_union(ps->independence,
-			isl_union_map_copy(scop->independences[i]->filter));
+						       isl_union_map_copy(scop->independences[i]->filter));
 
 	compute_tagger(ps);
 	compute_dependences(ps);
@@ -964,7 +965,7 @@ static struct ppcg_scop *ppcg_scop_from_pet_scop(struct pet_scop *scop,
 struct ppcg_transform_data {
 	struct ppcg_options *options;
 	__isl_give isl_printer *(*transform)(__isl_take isl_printer *p,
-		struct ppcg_scop *scop, void *user);
+					     struct ppcg_scop *scop, void *user);
 	void *user;
 };
 
@@ -977,15 +978,15 @@ static int print_original(struct pet_scop *scop, struct ppcg_options *options)
 	if (!pet_scop_can_build_ast_exprs(scop)) {
 		if (options->debug->verbose)
 			fprintf(stdout, "Printing original code because "
-				"some index expressions cannot currently "
-				"be printed\n");
+					"some index expressions cannot currently "
+					"be printed\n");
 		return 1;
 	}
 
 	if (pet_scop_has_data_dependent_conditions(scop)) {
 		if (options->debug->verbose)
 			fprintf(stdout, "Printing original code because "
-				"input involves data dependent conditions\n");
+					"input involves data dependent conditions\n");
 		return 1;
 	}
 
@@ -1001,7 +1002,7 @@ static int print_original(struct pet_scop *scop, struct ppcg_options *options)
  * the original code.
  */
 static __isl_give isl_printer *transform(__isl_take isl_printer *p,
-	struct pet_scop *scop, void *user)
+					 struct pet_scop *scop, void *user)
 {
 	struct ppcg_transform_data *data = user;
 	struct ppcg_scop *ps;
@@ -1014,6 +1015,9 @@ static __isl_give isl_printer *transform(__isl_take isl_printer *p,
 
 	scop = pet_scop_align_params(scop);
 	ps = ppcg_scop_from_pet_scop(scop, data->options);
+
+	// before transformation we need to te the dependencies
+	int status = te_custom_schedule(ps->dep_false, ps->schedule);
 
 	p = data->transform(p, ps, data->user);
 
@@ -1031,11 +1035,12 @@ static __isl_give isl_printer *transform(__isl_take isl_printer *p,
  * the pet_scop to a ppcg_scop before calling "fn".
  */
 int ppcg_transform(isl_ctx *ctx, const char *input, FILE *out,
-	struct ppcg_options *options,
-	__isl_give isl_printer *(*fn)(__isl_take isl_printer *p,
-		struct ppcg_scop *scop, void *user), void *user)
+		   struct ppcg_options *options,
+		   __isl_give isl_printer *(*fn)(__isl_take isl_printer *p,
+						 struct ppcg_scop *scop, void *user),
+		   void *user)
 {
-	struct ppcg_transform_data data = { options, fn, user };
+	struct ppcg_transform_data data = {options, fn, user};
 	return pet_transform_C_source(ctx, input, out, &transform, &data);
 }
 
@@ -1085,10 +1090,10 @@ int main(int argc, char **argv)
 		r = generate_cuda(ctx, options->ppcg, options->input);
 	else if (options->ppcg->target == PPCG_TARGET_OPENCL)
 		r = generate_opencl(ctx, options->ppcg, options->input,
-				options->output);
+				    options->output);
 	else
 		r = generate_cpu(ctx, options->ppcg, options->input,
-				options->output);
+				 options->output);
 
 	isl_ctx_free(ctx);
 
